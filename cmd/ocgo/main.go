@@ -29,6 +29,7 @@ const (
 	defaultHost                        = "127.0.0.1"
 	defaultPort                        = 3456
 	openAIURL                          = "https://opencode.ai/zen/go/v1/chat/completions"
+	openAIResponsesURL                 = "https://opencode.ai/zen/go/v1/responses"
 	codexProfileName                   = "ocgo-launch"
 	maxAnthropicToolResultContentChars = 120000
 )
@@ -753,6 +754,14 @@ func modelUsesAnthropicEndpoint(model string) bool {
 	return modelMetadata(model).UsesAnthropicEndpoint
 }
 
+func modelUsesResponsesEndpoint(model string) bool {
+	id := strings.ToLower(modelID(model))
+	return strings.HasPrefix(id, "muse-spark-") ||
+		strings.HasPrefix(id, "gpt-6-") ||
+		strings.HasPrefix(id, "gpt-5.6-") ||
+		strings.HasPrefix(id, "grok-")
+}
+
 func modelSupportsImages(model string) bool {
 	for _, modality := range modelMetadata(model).InputModalities {
 		if modality == "image" {
@@ -1118,9 +1127,34 @@ func proxyResponses(w http.ResponseWriter, r *http.Request, cfg Config) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var rr ResponsesRequest
-	if err := json.NewDecoder(r.Body).Decode(&rr); err != nil {
+	rawBody, err := io.ReadAll(r.Body)
+	if err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	var rr ResponsesRequest
+	if err := json.Unmarshal(rawBody, &rr); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if modelUsesResponsesEndpoint(rr.Model) {
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, openAIResponsesURL, bytes.NewReader(rawBody))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+		req.Header.Set("Content-Type", "application/json")
+		applyOpenCodeSessionHeaders(req.Header, r.Header)
+		resp, err := (&http.Client{Timeout: 10 * time.Minute}).Do(req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		copyHeaders(w.Header(), resp.Header)
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
 		return
 	}
 	or := responsesToChat(rr)
@@ -1495,7 +1529,7 @@ func formatReasoningNumber(n float64) string {
 func normalizeReasoningEffort(effort string) string {
 	switch strings.ToLower(strings.TrimSpace(effort)) {
 	case "0", "minimal", "min", "none", "off", "disabled", "false":
-		return "minimal"
+		return ""
 	case "1", "low", "light":
 		return "low"
 	case "2", "medium", "med", "normal", "default":
@@ -1503,7 +1537,7 @@ func normalizeReasoningEffort(effort string) string {
 	case "3", "4", "high", "xhigh", "max", "maximum", "deep", "true", "enabled":
 		return "high"
 	default:
-		return strings.TrimSpace(effort)
+		return ""
 	}
 }
 
@@ -3211,7 +3245,6 @@ func writeCodexProfile(path, baseURL string) error {
 		`forced_login_method = "api"`,
 		fmt.Sprintf("model_provider = %q", codexProfileName),
 		fmt.Sprintf("model_catalog_json = %q", catalogPath),
-		`model_reasoning_effort = "minimal"`,
 		`model_reasoning_summary = "none"`,
 		"",
 		fmt.Sprintf("[model_providers.%s]", codexProfileName),

@@ -223,7 +223,6 @@ func TestWriteCodexProfile(t *testing.T) {
 		`forced_login_method = "api"`,
 		`model_provider = "ocgo-launch"`,
 		`model_catalog_json = `,
-		`model_reasoning_effort = "minimal"`,
 		`model_reasoning_summary = "none"`,
 		"[model_providers.ocgo-launch]",
 		`name = "OpenCode Go"`,
@@ -507,6 +506,19 @@ func TestAnthropicEndpointModels(t *testing.T) {
 	for _, model := range []string{"kimi-k2.6", "qwen3.6-plus", "qwen3.5-plus"} {
 		if modelUsesAnthropicEndpoint(model) {
 			t.Fatalf("%s should use OpenAI-compatible upstream", model)
+		}
+	}
+}
+
+func TestResponsesEndpointModels(t *testing.T) {
+	for _, model := range []string{"muse-spark-1.3-contributor", "muse-spark-1.2-contributor", "gpt-6-luna", "gpt-5.6-luna", "grok-4.7", "grok-4.6", "opencode-go/muse-spark-1.3-contributor", "opencode-go/gpt-6-luna"} {
+		if !modelUsesResponsesEndpoint(model) {
+			t.Fatalf("%s should use Responses-compatible upstream", model)
+		}
+	}
+	for _, model := range []string{"glm-5.3-flash", "deepseek-v4.1-flash", "mimo-v2.6-flash", "qwen3.8-flash", "kimi-k3"} {
+		if modelUsesResponsesEndpoint(model) {
+			t.Fatalf("%s should not use Responses-compatible upstream", model)
 		}
 	}
 }
@@ -914,8 +926,8 @@ func TestNormalizeReasoningEffort(t *testing.T) {
 		in   string
 		want string
 	}{
-		{in: "minimal", want: "minimal"},
-		{in: "0", want: "minimal"},
+		{in: "minimal", want: ""},
+		{in: "0", want: ""},
 		{in: "low", want: "low"},
 		{in: "1", want: "low"},
 		{in: "medium", want: "medium"},
